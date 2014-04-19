@@ -36,6 +36,8 @@ setup_info = {
     ],
     'entry_points': {
         'console_scripts': ['myapp = myapp.cli:main'],
+        'zc.buildout': ['main = myapp.recipe:Recipe'],
+        'zc.buildout.uninstall': ['main = myapp.recipe:uninstall'],
     }
 }
 
