@@ -35,7 +35,7 @@ setup_info = {
     'install_requires': [
     ],
     'entry_points': {
-        #'console_scripts': ['myapp = myapp.main:main']
+        'console_scripts': ['myapp = myapp.cli:main'],
     }
 }
 
