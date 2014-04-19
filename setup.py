@@ -26,7 +26,7 @@ setup_info = {
     'author': 'mete0r',
     'author_email': 'mete0r@sarangbang.or.kr',
     'license': 'GNU Affero General Public License v3 or later (AGPLv3+)',
-    #'url': 'https://github.com/mete0r/myapp',
+    # 'url': 'https://github.com/mete0r/myapp',
 
     'packages': [
         'myapp'
