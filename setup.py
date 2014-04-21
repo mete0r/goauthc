@@ -55,6 +55,7 @@ setup_info = {
         'console_scripts': ['myapp = myapp.cli:main'],
         'zc.buildout': ['main = myapp.recipe:Recipe'],
         'zc.buildout.uninstall': ['main = myapp.recipe:uninstall'],
+        'paste.app_factory': ['main = myapp.wsgi:app_factory'],
     }
 }
 
