@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 #
-#   myapp : some description
+#   goauthc : mete0r's Google OAuth 2.0 client
 #   Copyright (C) 2014 mete0r <mete0r@sarangbang.or.kr>
 #
 #   This program is free software: you can redistribute it and/or modify
@@ -35,27 +35,26 @@ def read_file(path):
 
 
 setup_info = {
-    'name': 'myapp',
+    'name': 'mete0r.goauthc',
     'version': read_file('VERSION.txt').strip(),
-    'description': '',
+    'description': 'mete0r\'s Google OAuth 2.0 client',
     'long_description': read_file('README.rst'),
 
     'author': 'mete0r',
     'author_email': 'mete0r@sarangbang.or.kr',
     'license': 'GNU Affero General Public License v3 or later (AGPLv3+)',
-    # 'url': 'https://github.com/mete0r/myapp',
+    'url': 'https://github.com/mete0r/goauthc',
 
     'packages': [
-        'myapp'
+        'mete0r_goauthc'
     ],
-    'package_dir': {'': 'src'},
+    'package_dir': {'': '.'},
     'install_requires': [
+        'requests',
+        'docopt',
     ],
     'entry_points': {
-        'console_scripts': ['myapp = myapp.cli:main'],
-        'zc.buildout': ['main = myapp.recipe:Recipe'],
-        'zc.buildout.uninstall': ['main = myapp.recipe:uninstall'],
-        'paste.app_factory': ['main = myapp.wsgi:app_factory'],
+        'console_scripts': ['goauthc = mete0r_goauthc.cli:main'],
     }
 }
 
