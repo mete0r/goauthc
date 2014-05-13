@@ -122,3 +122,10 @@ class Repo:
         alias_path = self.get_alias_path(alias)
         if os.path.lexists(alias_path) or os.path.exists(alias_path):
             os.unlink(alias_path)
+
+
+def get_default_user_repo():
+    user_dir = os.path.expanduser('~')
+    repo_dir = os.path.join(user_dir, '.goauthc')
+    repo = Repo(repo_dir)
+    return repo

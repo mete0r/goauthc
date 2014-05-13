@@ -38,7 +38,7 @@ from docopt import docopt
 from mete0r_goauthc import InstalledAppFlow
 from mete0r_goauthc import DeviceFlow
 from mete0r_goauthc import get_flow_type
-from mete0r_goauthc.repo import Repo
+from mete0r_goauthc.repo import get_default_user_repo
 
 
 logger = logging.getLogger(__name__)
@@ -59,9 +59,7 @@ def main():
     args = docopt(__doc__)
     logging.basicConfig()
 
-    user_dir = os.path.expanduser('~')
-    repo_dir = os.path.join(user_dir, '.goauthc')
-    repo = Repo(repo_dir)
+    repo = get_default_user_repo()
 
     if args['list']:
         repo_list(repo, args)
