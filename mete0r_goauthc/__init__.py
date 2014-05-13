@@ -166,3 +166,17 @@ class DeviceFlow:
                 time.sleep(interval)
                 continue
             raise OAuthException(resp['error'], resp)
+
+
+def refresh_token(client, refresh_token):
+    params = {
+        'refresh_token': refresh_token,
+        'client_id': client['client_id'],
+        'client_secret': client['client_secret'],
+        'grant_type': 'refresh_token'
+    }
+    r = requests.post(client['token_uri'], data=params)
+    resp = r.json()
+    if 'access_token' in resp:
+        return resp
+    raise OAuthException(resp['error'], resp)
