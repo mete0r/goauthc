@@ -16,11 +16,23 @@
 #   You should have received a copy of the GNU Affero General Public License
 #   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
+from contextlib import contextmanager
+from datetime import datetime
 import json
 import logging
 import os.path
 
-from mete0r_goauthc import get_flow_type
+from sqlalchemy import create_engine
+from sqlalchemy import or_
+from sqlalchemy.orm import Session
+
+from mete0r_goauthc.flows import get_flow_type
+from mete0r_goauthc.models import metadata
+from mete0r_goauthc.models import AccessToken
+from mete0r_goauthc.models import BaseToken
+from mete0r_goauthc.models import Client
+from mete0r_goauthc.models import TokenScope
+from mete0r_goauthc.models import User
 
 
 logger = logging.getLogger(__name__)
@@ -28,104 +40,223 @@ logger = logging.getLogger(__name__)
 
 class Repo:
 
-    def __init__(self, base_dir):
-        self._base_dir = base_dir
+    def __init__(self, session):
+        self.session = session
 
-    @property
-    def base_dir(self):
-        base_dir = os.path.normpath(self._base_dir)
+    @classmethod
+    @contextmanager
+    def open_db_url(cls, db_url):
+        engine = create_engine(db_url)
+        session = Session(bind=engine)
+        try:
+            yield cls(session)
+            session.commit()
+        except:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
+    DEFAULT_REPO_DB = 'sqlite:///${REPO_DIR}/repo.db'
+
+    @classmethod
+    @contextmanager
+    def open_dir(cls, base_dir):
+        config_path = os.path.join(base_dir, 'config.json')
+        with file(config_path, 'r') as f:
+            config = json.load(f)
+
+        db_url = config.get('db.url', cls.DEFAULT_REPO_DB)
+        db_url = db_url.replace('${REPO_DIR}', base_dir)
+        with cls.open_db_url(db_url) as repo:
+            repo.config = config
+
+            @contextmanager
+            def config_edit():
+                config = repo.config
+                yield config
+                with file(config_path, 'w') as f:
+                    json.dump(config, f, indent=2, sort_keys=True)
+
+            repo.config_edit = config_edit
+
+            yield repo
+
+    @classmethod
+    @contextmanager
+    def create(cls, base_dir):
         if not os.path.exists(base_dir):
             os.makedirs(base_dir)
-        return base_dir
+
+        config = {
+            'db.url': cls.DEFAULT_REPO_DB
+        }
+        config_path = os.path.join(base_dir, 'config.json')
+        with file(config_path, 'w') as f:
+            json.dump(config, f, indent=2, sort_keys=True)
+
+        db_url = config['db.url']
+        db_url = db_url.replace('${REPO_DIR}', base_dir)
+        engine = create_engine(db_url)
+        metadata.create_all(engine)
 
     @property
-    def clients_dir(self):
-        clients_dir = os.path.join(self.base_dir, 'clients')
-        clients_dir = os.path.normpath(clients_dir)
-        if not os.path.exists(clients_dir):
-            os.makedirs(clients_dir)
-        return clients_dir
+    def clients(self):
+        return self.session.query(Client)
 
-    def get_client_path(self, client_id):
-        path = os.path.join(self.clients_dir, client_id + '.json')
-        path = os.path.normpath(path)
-        return path
+    def get_client(self, identifier):
+        return (self.get_client_by_alias(identifier) or
+                self.get_client_by_client_id(identifier) or
+                self.get_client_by_id(identifier))
 
-    def get_client_id_from_path(self, client_path):
-        return os.path.basename(client_path)[:-5]
+    def get_client_by_alias(self, alias):
+        for client in self.clients.filter_by(alias=alias):
+            return client
 
-    def get_clients(self):
-        for name in os.listdir(self.clients_dir):
-            path = os.path.join(self.clients_dir, name)
-            try:
-                with file(path) as f:
-                    yield json.load(f)
-            except Exception as e:
-                logger.warning('An error occured in opening %s', path)
-                logger.warning('%s', e)
+    def get_client_by_client_id(self, client_id):
+        for client in self.clients.filter_by(client_id=client_id):
+            return client
 
-    def get_client(self, client_id):
-        client_path = self.get_client_path(client_id)
-        with file(client_path) as f:
-            return json.load(f)
+    def get_client_by_id(self, _id):
+        try:
+            _id = int(_id)
+        except ValueError:
+            return
+        for client in self.clients.filter_by(_id=_id):
+            return client
 
-    def put_client(self, client):
-        flow_type = get_flow_type(client)
-        client_id = client[flow_type]['client_id']
-        path = self.get_client_path(client_id)
-        with file(path, 'w') as f:
-            json.dump(client, f, indent=2, sort_keys=True)
-        return client_id
+    def put_client(self, credentials, alias=None):
+        flow_type = get_flow_type(credentials)
+        client_id = credentials[flow_type]['client_id']
+        client_secret = credentials[flow_type]['client_secret']
 
-    def delete_client(self, client_id):
-        client_path = self.get_client_path(client_id)
-        if os.path.exists(client_path):
-            os.unlink(client_path)
+        client = Client(client_id=client_id, client_secret=client_secret,
+                        alias=alias, flow_type=flow_type,
+                        data=credentials[flow_type])
+
+        self.session.add(client)
+        self.session.flush()
+        return client
+
+    def delete_client(self, identifier):
+        client = self.get_client(identifier)
+        if client:
+            self.session.delete(client)
+            self.session.flush()
 
     @property
-    def aliases_dir(self):
-        aliases_dir = os.path.join(self.base_dir, 'aliases')
-        aliases_dir = os.path.normpath(aliases_dir)
-        if not os.path.exists(aliases_dir):
-            os.makedirs(aliases_dir)
-        return aliases_dir
+    def users(self):
+        return self.session.query(User)
 
-    def get_alias_path(self, alias):
-        alias_path = os.path.join(self.aliases_dir, alias)
-        alias_path = os.path.normpath(alias_path)
-        return alias_path
+    def get_user(self, identifier):
+        return (self.get_user_by_email(identifier) or
+                self.get_user_by_user_id(identifier) or
+                self.get_user_by_id(identifier))
 
-    def get_aliases(self):
-        for alias in os.listdir(self.aliases_dir):
-            try:
-                client_id = self.get_alias(alias)
-                yield alias, client_id
-            except Exception as e:
-                logger.warning('An error occured in opening %s', alias)
-                logger.warning('%s', e)
+    def get_user_by_email(self, email):
+        for user in self.users.filter_by(email=email):
+            return user
 
-    def get_alias(self, alias):
-        alias_path = self.get_alias_path(alias)
-        client_path = os.readlink(alias_path)
-        client_id = self.get_client_id_from_path(client_path)
-        return client_id
+    def get_user_by_user_id(self, user_id):
+        for user in self.users.filter_by(user_id=user_id):
+            return user
 
-    def put_alias(self, alias, client_id):
-        self.delete_alias(alias)
+    def get_user_by_id(self, _id):
+        try:
+            _id = int(_id)
+        except ValueError:
+            return
+        try:
+            for user in self.users.filter_by(_id=_id):
+                return user
+        except OverflowError:
+            return
 
-        alias_path = self.get_alias_path(alias)
-        client_path = self.get_client_path(client_id)
-        client_path = os.path.relpath(client_path, os.path.dirname(alias_path))
-        os.symlink(client_path, alias_path)
+    def put_user(self, user_data):
+        user_id = user_data['user_id']
+        user = self.get_user(user_id) or User(user_id=user_id)
+        user.email = user_data.get('email')
+        user.verified_email = user_data.get('verified_email')
+        self.session.add(user)
+        self.session.flush()
+        return user
 
-    def delete_alias(self, alias):
-        alias_path = self.get_alias_path(alias)
-        if os.path.lexists(alias_path) or os.path.exists(alias_path):
-            os.unlink(alias_path)
+    def delete_user(self, identifier):
+        user = self.get_user(identifier)
+        if user:
+            self.session.delete(user)
 
+    @property
+    def tokens(self):
+        return self.session.query(AccessToken)
 
-def get_default_user_repo():
-    user_dir = os.path.expanduser('~')
-    repo_dir = os.path.join(user_dir, '.goauthc')
-    repo = Repo(repo_dir)
-    return repo
+    def get_tokens(self, client_id=None, user_id=None, scopes=(),
+                   exclude_revoked=False, exclude_expired=False):
+
+        tokens = self.tokens
+
+        if exclude_expired:
+            tokens = tokens.filter(AccessToken.expires_at > datetime.now())
+
+        if exclude_revoked:
+            tokens = tokens.filter(AccessToken.base_token_id == BaseToken._id)
+            tokens = tokens.filter(BaseToken.revoked == 0)
+
+        if client_id:
+            tokens = tokens.filter(AccessToken.base_token_id == BaseToken._id)
+            tokens = tokens.filter(BaseToken.client_id == Client.client_id)
+            tokens = tokens.filter(or_(Client.client_id == client_id,
+                                       Client.alias == client_id))
+        if user_id:
+            tokens = tokens.filter(AccessToken.base_token_id == BaseToken._id)
+            tokens = tokens.filter(BaseToken.user_id == User.user_id)
+            tokens = tokens.filter(or_(User.email == user_id,
+                                       User.user_id == user_id))
+
+        for scope in scopes:
+            tokens = tokens.filter(AccessToken.base_token_id == BaseToken._id)
+            tokens = tokens.filter(BaseToken.scope_objects.any(value=scope))
+
+        return tokens
+
+    def get_token(self, token_id):
+        for token in self.tokens.filter(AccessToken._id == token_id):
+            return token
+
+    def put_token(self, client_id, user_id, credentials):
+        base_token = BaseToken(client_id=client_id, user_id=user_id)
+        if 'refresh_token' in credentials:
+            base_token.refresh_token = credentials['refresh_token']
+        for scope in credentials['scope']:
+            base_token.scope_objects.append(TokenScope(value=scope))
+        self.session.add(base_token)
+        return self.add_access_token(base_token, credentials)
+
+    def add_access_token(self, base_token, credentials):
+        expires_at = datetime.fromtimestamp(credentials['expires_at'])
+        access_token = AccessToken(base_token=base_token,
+                                   access_token=credentials['access_token'],
+                                   id_token=credentials.get('id_token'),
+                                   expires_in=credentials['expires_in'],
+                                   expires_at=expires_at,
+                                   token_type=credentials['token_type'])
+        self.session.add(access_token)
+        return access_token
+
+    def delete_token(self, token_id):
+        token = self.get_token(token_id)
+        if token:
+            self.session.delete(token)
+
+    @property
+    def basetokens(self):
+        return self.session.query(BaseToken)
+
+    def get_basetoken(self, basetoken_id):
+        for basetoken in self.basetokens.filter(BaseToken._id == basetoken_id):
+            return basetoken
+
+    def delete_basetoken(self, basetoken_id):
+        basetoken = self.get_basetoken(basetoken_id)
+        if basetoken:
+            self.session.delete(basetoken)

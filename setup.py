@@ -52,6 +52,8 @@ setup_info = {
     'install_requires': [
         'requests',
         'docopt',
+        'sqlalchemy',
+        'tabulate',
     ],
     'entry_points': {
         'console_scripts': ['goauthc = mete0r_goauthc.cli:main'],

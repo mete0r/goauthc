@@ -2,6 +2,7 @@ bin
 parts
 eggs
 develop-eggs
+.goauthc
 .installed.cfg
 .*.sw?
 *.pyc
