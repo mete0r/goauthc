@@ -257,6 +257,13 @@ class TransformTest(TestCase):
                            transformer_table_into_tabulate),
                           transformers)
 
+    def test_resolve_table_renderer(self):
+        from ..cli import resolve_renderers_for_format
+        renderer = None
+        for renderer in resolve_renderers_for_format('table'):
+            print renderer
+        self.assertTrue(renderer)
+
 
 def test_suite():
     return TestSuite((makeSuite(RepoCreateTest),

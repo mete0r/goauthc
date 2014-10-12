@@ -22,14 +22,14 @@ Usage:
        goauthc client list
        goauthc client import <client_secret.json> [<client-alias>] [--delete]
        goauthc client delete <client>
-       goauthc client show <client>
+       goauthc client show <client> [--output-format=<format>]
        goauthc client dump <client>
        goauthc user list
-       goauthc user show <user>
+       goauthc user show <user> [--output-format=<format>]
        goauthc user delete <user>
        goauthc auth [--flow=<type>] <client> [--login=<email>] <scope>...
        goauthc token list [--client=<client>] [--user=<user>] [<scope>...]
-       goauthc token show <token>
+       goauthc token show <token> [--output-format=<format>]
        goauthc token dump <token>
        goauthc token info <token>
        goauthc token refresh <token>
@@ -37,7 +37,7 @@ Usage:
        goauthc token delete <token>
        goauthc token acquire [--client=<client>] [--user=<user>] <scope>...
        goauthc basetoken list
-       goauthc basetoken show <basetoken>
+       goauthc basetoken show <basetoken> [--output-format=<format>]
        goauthc basetoken delete <basetoken>
        goauthc config set <name> <value>
        goauthc config list
@@ -136,7 +136,41 @@ def main():
                          in resource_resolvers]
     with nested(*resource_contexts) as resources:
         renderable = f(*resources)
-        renderer = resolve_renderer_for_producer(f) or renderer_nothing
+
+        formatspec = format_of_producer.get(f)
+        if formatspec is None:
+            logger.warning('%r does not specified result format: '
+                           'use @with_renderer', f)
+
+        # try direct renderer first
+        renderer = get_direct_renderer_for_format(formatspec)
+        if renderer:
+            logger.debug('renderer for %r: %r', formatspec, renderer)
+        else:
+            if args['--output-format']:
+                requested_format = FormatSpec(args['--output-format'])
+                logger.debug('main: resolving transformed renderer %r -> %r '
+                             '(requested format)',
+                             formatspec, requested_format)
+                renderer = resolve_transformed_renderer(formatspec,
+                                                        requested_format)
+                if renderer is None:
+                    logger.error('not renderable in the requested format: %s',
+                                 args['--output-format'])
+            else:
+                # TODO: try producer "f" preferred format first
+
+                # TODO: default preference; we prefer this only in case of
+                # stdout is a tty
+                preferred_format = FormatSpec('text')
+                logger.debug('main: resolving transformed renderer %r -> %r '
+                             '(preferred format)',
+                             formatspec, preferred_format)
+                renderer = resolve_transformed_renderer(formatspec,
+                                                        preferred_format)
+
+        renderer = renderer or renderer_nothing
+
         logger.debug('main: resolved renderer for user %r: %r', f, renderer)
         render = renderer(args, config)
         bytechunks = render(renderable)
@@ -147,7 +181,7 @@ def main():
     pformatlog(logger.debug, elements_of_composed_transform)
     pformatlog(logger.debug, dict((edge, elements_of_composed_transform[t])
                                   for edge, t in shortest_transforms.items()))
-    pformatlog(logger.debug, defined_formats)
+    # pformatlog(logger.debug, defined_formats)
 
 
 def pformatlog(log, o):
@@ -247,6 +281,10 @@ def resource_create_repo(args, config):
 defined_formats = {}
 
 
+def FormatSpec(*formatspec):
+    return formatspec
+
+
 def define_format(formatspec):
     return defined_formats.setdefault(formatspec, {
         'defined_renderer': None,
@@ -337,12 +375,36 @@ def resolve_renderers_for_format(formatspec):
 def resolve_transformed_renderers_for(source_format):
     # for every defined renderers
     for target_format, target_renderer in defined_renderer_for_format.items():
+        logger.debug('resolving transform %r -> %r:',
+                     source_format, target_format)
         for transform in resolve_transforms(source_format, target_format):
             renderer = compose_transformed_renderer(transform, target_renderer)
             logger.debug('renderer %r for %r -> %r -> %r -> %r', renderer,
                          source_format, transform, target_format,
                          target_renderer)
             yield renderer
+
+
+def resolve_transformed_renderer(source_format, target_format):
+    target_renderer = None
+    for target_renderer in resolve_renderers_for_format(target_format):
+        break
+    logger.debug('resolved target renderer for %r: %r', target_format,
+                 target_renderer)
+
+    if target_renderer is None:
+        logger.debug('no target renderer found for %r', target_format)
+        return
+
+    for transformer in resolve_transforms(source_format,
+                                          target_format):
+        logger.debug('found transform %r: %r -> %r',
+                     transformer, source_format, target_format)
+        return compose_transformed_renderer(transformer, target_renderer)
+    logger.debug('no transform found: %r -> %r',
+                 source_format, target_format)
+    logger.debug('discarding resolved target renderer for %r: %r',
+                 target_format, target_renderer)
 
 
 def compose_transformed_renderer(transformer, renderer):
@@ -559,6 +621,14 @@ def find_shortest_transforms(source_format, target_format):  # noqa
     return reversed(backpath)
 
 
+@transform_source_format('client')
+@transform_target_format('json')
+def transformer_client_into_json(args, config):
+    def transform(client):
+        return client.raw
+    return transform
+
+
 @transform_source_format('client', list)
 @transform_target_format('table')
 def transformer_client_list_into_table(args, config):
@@ -579,6 +649,14 @@ def transformer_client_list_into_table(args, config):
             'header': header,
             'body': body,
         }
+    return transform
+
+
+@transform_source_format('token')
+@transform_target_format('json')
+def transformer_token_into_json(args, config):
+    def transform(token):
+        return token.raw
     return transform
 
 
