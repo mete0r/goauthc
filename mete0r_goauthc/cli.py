@@ -388,25 +388,6 @@ def renderer_json(args, config):
     return render
 
 
-@renderer('tabulate')
-def renderer_tabulate(args, config):
-    options = dict((key[len('renderer.tabulate.'):], value)
-                   for key, value in config.items()
-                   if key.startswith('renderer.tabulate.'))
-    if 'headers' in options:
-        del options['headers']
-
-    def render(renderable):
-        if renderable:
-            renderable = dict(renderable)
-            table = renderable.pop('table')
-            kwargs = dict(options)
-            kwargs.update(renderable)
-            yield tabulate(table, **kwargs)
-            yield '\n'
-    return render
-
-
 #
 # transforms
 #
@@ -701,6 +682,24 @@ def transformer_table_into_tabulate(args, config):
             'table': body,
             'headers': header
         }
+    return transform
+
+
+@transform_source_format('tabulate')
+@transform_target_format('text')
+def transformer_tabulate_into_text(args, config):
+    options = dict((key[len('transform.tabulate.text.'):], value)
+                   for key, value in config.items()
+                   if key.startswith('transform.tabulate.text.'))
+    if 'headers' in options:
+        del options['headers']
+
+    def transform(renderable):
+        renderable = dict(renderable)
+        table = renderable.pop('table')
+        kwargs = dict(options)
+        kwargs.update(renderable)
+        return tabulate(table, **kwargs) + '\n'
     return transform
 
 
