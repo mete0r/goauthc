@@ -136,12 +136,25 @@ def main():
                          in resource_resolvers]
     with nested(*resource_contexts) as resources:
         renderable = f(*resources)
-        renderer = resolve_renderer(f)
+        renderer = resolve_renderer_for_producer(f) or renderer_nothing
         logger.debug('main: resolved renderer for user %r: %r', f, renderer)
         render = renderer(args, config)
         bytechunks = render(renderable)
         for bytes in bytechunks:
             sys.stdout.write(bytes)
+
+    pformatlog(logger.debug, shortest_transforms)
+    pformatlog(logger.debug, elements_of_composed_transform)
+    pformatlog(logger.debug, dict((edge, elements_of_composed_transform[t])
+                                  for edge, t in shortest_transforms.items()))
+    pformatlog(logger.debug, defined_formats)
+
+
+def pformatlog(log, o):
+    from pprint import pformat
+    s = pformat(o)
+    for l in s.split('\n'):
+        log(l)
 
 
 #
@@ -228,43 +241,138 @@ def resource_create_repo(args, config):
         return repo_dir
     yield create_repo
 
+#
+# renderable formats
+#
+defined_formats = {}
+
+
+def define_format(formatspec):
+    return defined_formats.setdefault(formatspec, {
+        'defined_renderer': None,
+        'declared_producers': set(),
+        'neighbors': {
+        }
+    })
+
 
 #
-# renderers
+# producer/renderers
 #
 
-renderer_map = {}
-with_renderer_map = {}
+defined_renderer_for_format = {}
+defined_producer_for_format = {}
+format_of_renderer = {}
+format_of_producer = {}
 
 
-def renderer(*key):
-    def decorator(render_fn):
-        renderer_map[key] = render_fn
-        return render_fn
+def renderer(*formatspec):
+    ''' Define a renderer for the specified formatspec. '''
+
+    formatdesc = define_format(formatspec)
+
+    def decorator(renderer):
+        defined_renderer_for_format[formatspec] = renderer
+        format_of_renderer[renderer] = formatspec
+        formatdesc['defined_renderer'] = renderer
+        return renderer
     return decorator
 
 
-def with_renderer(*key):
+def get_renderer_format(renderer):
+    return format_of_renderer[renderer]
+
+
+def get_direct_renderer_for_format(formatspec):
+    return defined_renderer_for_format.get(formatspec)
+
+
+def with_renderer(*formatspec):
+    ''' Declare a callable as a producer of the specified formatspec.
+    '''
+
+    formatdesc = define_format(formatspec)
+
     def decorator(f):
-        render_fn = renderer_map[key]
-        with_renderer_map[f.__module__, f.__name__] = render_fn
+        defined_producer_for_format[formatspec] = f
+        format_of_producer[f] = formatspec
+        formatdesc['declared_producers'].add(f)
         return f
     return decorator
 
 
-def resolve_renderer(f):
-    key = (f.__module__, f.__name__)
-    return with_renderer_map.get(key, render_nothing)
+def get_producer_format(producer):
+    return format_of_producer[producer]
 
 
-def render_nothing(args, config):
+def resolve_renderer_for_producer(f):
+    logger.debug('resolving renderer for: %r', f)
+    for renderer in resolve_renderers_for_producer(f):
+        logger.debug('resolved renderer for %r: %r', f, renderer)
+        return renderer
+    logger.warning('no renderer found for: %r', f)
+
+
+def resolve_renderers_for_producer(f):
+    logger.debug('resolving renderers for: %r', f)
+    formatspec = format_of_producer.get(f)
+    if formatspec is None:
+        logger.warning('%r does not specified result format: '
+                       'use @with_renderer', f)
+    return resolve_renderers_for_format(formatspec)
+
+
+def resolve_renderers_for_format(formatspec):
+    logger.debug('resolving renderers for: %r', formatspec)
+    # try direct renderer first
+    renderer = get_direct_renderer_for_format(formatspec)
+    if renderer:
+        logger.debug('renderer for %r: %r', formatspec, renderer)
+        yield renderer
+
+    for renderer in resolve_transformed_renderers_for(formatspec):
+        yield renderer
+
+
+def resolve_transformed_renderers_for(source_format):
+    # for every defined renderers
+    for target_format, target_renderer in defined_renderer_for_format.items():
+        for transform in resolve_transforms(source_format, target_format):
+            renderer = compose_transformed_renderer(transform, target_renderer)
+            logger.debug('renderer %r for %r -> %r -> %r -> %r', renderer,
+                         source_format, transform, target_format,
+                         target_renderer)
+            yield renderer
+
+
+def compose_transformed_renderer(transformer, renderer):
+    ''' source format -> transformer -> target format -> renderer
+    '''
+    source_format = source_format_of_transform[transformer]
+    target_format = target_format_of_transform[transformer]
+    assert target_format == get_renderer_format(renderer)
+
+    def transformed_renderer(args, config):
+        render_target = renderer(args, config)
+        transform = transformer(args, config)
+
+        def render(renderable):
+            target = transform(renderable)
+            return render_target(target)
+        return render
+    format_of_renderer[transformed_renderer] = source_format
+    return transformed_renderer
+
+
+@renderer(None)
+def renderer_nothing(args, config):
     def render(renderable):
         return []
     return render
 
 
 @renderer('text')
-def render_text(args, config):
+def renderer_text(args, config):
     encoding = sys.stdout.encoding or 'utf-8'
 
     def render(text):
@@ -273,33 +381,18 @@ def render_text(args, config):
 
 
 @renderer('json')
-def render_json(args, config):
+def renderer_json(args, config):
     def render(renderable):
         yield json.dumps(renderable, indent=2, sort_keys=True)
         yield '\n'
     return render
 
 
-@renderer('table')
-def render_table(args, config):
-    render_tabulate = renderer_tabulate(args, config)
-
-    def render(renderable):
-        if renderable:
-            header = renderable.get('header')
-            body = renderable.get('body', [])
-            return render_tabulate({
-                'table': body,
-                'headers': header
-            })
-    return render
-
-
 @renderer('tabulate')
 def renderer_tabulate(args, config):
-    options = dict((key[len('tabulate.'):], value)
+    options = dict((key[len('renderer.tabulate.'):], value)
                    for key, value in config.items()
-                   if key.startswith('tabulate.'))
+                   if key.startswith('renderer.tabulate.'))
     if 'headers' in options:
         del options['headers']
 
@@ -314,186 +407,317 @@ def renderer_tabulate(args, config):
     return render
 
 
-@renderer('client')
-def render_client(args, config):
-    render_list = render_client_list(args, config)
-
-    def render(client):
-        clients = [client] if client else []
-        return render_list(clients)
-    return render
-
-
-@renderer('client', list)
-def render_client_list(args, config):
-    render_tbl = render_table(args, config)
-
-    def render(clients):
-        table = make_clients_table(clients)
-        return render_tbl(table)
-    return render
-
-
-@renderer('token')
-def render_token(args, config):
-    render_list = render_token_list(args, config)
-
-    def render(token):
-        tokens = [token] if token else []
-        return render_list(tokens)
-    return render
-
-
-@renderer('token', list)
-def render_token_list(args, config):
-    render_tbl = render_table(args, config)
-
-    def render(tokens):
-        table = make_tokens_table(tokens)
-        return render_tbl(table)
-    return render
-
-
-@renderer('basetoken')
-def render_basetoken(args, config):
-    render_list = render_basetoken_list(args, config)
-
-    def render(basetoken):
-        list = [basetoken] if basetoken else []
-        return render_list(list)
-    return render
-
-
-@renderer('basetoken', list)
-def render_basetoken_list(args, config):
-    render_tbl = render_table(args, config)
-
-    def render(basetokens):
-        table = make_basetoken_table(basetokens)
-        return render_tbl(table)
-    return render
-
-
-@renderer('user')
-def render_user(args, config):
-    render_list = render_user_list(args, config)
-
-    def render(user):
-        list = [user] if user else []
-        return render_list(list)
-    return render
-
-
-@renderer('user', list)
-def render_user_list(args, config):
-    render_tbl = render_table(args, config)
-
-    def render(users):
-        table = make_users_table(users)
-        return render_tbl(table)
-    return render
-
-
 #
-# renderables
+# transforms
 #
 
 
-def make_clients_table(clients):
-    header = [
-        '_id',
-        'client_id',
-        'Alias',
-        'Flow Type',
-    ]
-    body = [[
-        client._id,
-        client.client_id,
-        client.alias,
-        client.flow_type
-    ] for client in clients]
-    return {
-        'header': header,
-        'body': body,
-    }
+defined_transforms = {}
+shortest_transforms = {}
+source_format_of_transform = {}
+target_format_of_transform = {}
+elements_of_composed_transform = {}
 
 
-def make_tokens_table(tokens):
-    header = [
-        '_id',
-        'Client',
-        'User',
-        'Access Token',
-        'Expires At',
-        'Refresh Token',
-        'Token Type',
-        'Revoked',
-        'Scope',
-    ]
-    body = []
-    for token in tokens:
-        body.append([
-            token._id,
-            token.client_alias or token.client_id,
-            token.user_email or token.user_id,
-            token.access_token,
-            'Expired' if token.expired else str(token.expires_at),
-            token.refresh_token,
-            token.token_type,
-            'Revoked' if token.revoked else '',
-            ' '.join(shortify_scope(s) for s in token.scope_tuple),
-        ])
-    return {
-        'header': header,
-        'body': body,
-    }
+def transform_source_format(*formatspec):
+    def decorator(transformer):
+        try:
+            transformer['target_format']
+        except Exception:
+            return {
+                'source_format': formatspec,
+                'transformer': transformer,
+            }
+        else:
+            transformer['source_format'] = formatspec
+            return register_transformer(transformer)
+    return decorator
 
 
-def make_basetoken_table(basetokens):
-    header = [
-        '_id',
-        'Client',
-        'User',
-        'Refresh Token',
-        'Revoked',
-        'Scope',
-    ]
-    body = []
-    for basetoken in basetokens:
-        body.append([
-            basetoken._id,
-            basetoken.client_alias or basetoken.client_id,
-            basetoken.user_email or basetoken.user_id,
-            basetoken.refresh_token,
-            'Revoked' if basetoken.revoked else '',
-            ' '.join(shortify_scope(s) for s in basetoken.scope_tuple),
-        ])
-
-    return {
-        'header': header,
-        'body': body,
-    }
+def transform_target_format(*formatspec):
+    def decorator(transformer):
+        try:
+            transformer['source_format']
+        except Exception:
+            return {
+                'target_format': formatspec,
+                'transformer': transformer,
+            }
+        else:
+            transformer['target_format'] = formatspec
+            return register_transformer(transformer)
+    return decorator
 
 
-def make_users_table(users):
-    header = [
-        '_id',
-        'user_id',
-        'Email',
-        'Verified Email',
-    ]
-    body = []
-    for user in users:
-        body.append([
-            user._id,
-            user.user_id,
-            user.email,
-            str(user.verified_email),
-        ])
-    return {
-        'header': header,
-        'body': body,
-    }
+def register_transformer(transformer):
+    f = transformer['transformer']
+    source_format = transformer['source_format']
+    target_format = transformer['target_format']
+    source_format_of_transform[f] = source_format
+    target_format_of_transform[f] = target_format
+    edge = (source_format, target_format)
+    if edge in defined_transforms:
+        raise Exception('Already defined transformer %r for %r -> %r' % (
+            defined_transforms[edge], source_format, target_format))
+    defined_transforms[edge] = f
+    define_format(source_format)['neighbors'][target_format] = f
+    return f
+
+
+def get_direct_transform(source_format, target_format):
+    edge = (source_format, target_format)
+    return defined_transforms.get(edge)
+
+
+def get_shortest_transform(source_format, target_format):
+    edge = source_format, target_format
+    if edge in shortest_transforms:
+        return shortest_transforms[edge]
+
+    try:
+        transforms = find_shortest_transforms(source_format, target_format)
+        transforms = list(transforms)
+    except Exception:
+        return
+    else:
+        logger.debug('composing transform %r -> %r: %r',
+                     source_format, target_format,
+                     transforms)
+        composed = compose_transforms(transforms)
+        shortest_transforms[edge] = composed
+        return composed
+
+
+def resolve_transforms(source_format, target_format):
+    # try direct transform first
+    direct_transform = get_direct_transform(source_format, target_format)
+    if direct_transform:
+        yield direct_transform
+
+    shortest_transform = get_shortest_transform(source_format, target_format)
+    if shortest_transform:
+        yield shortest_transform
+
+    # TODO: other paths
+
+
+def compose_transforms(transforms):
+    transform = None
+    for t in transforms:
+        if transform is None:
+            transform = t
+        else:
+            transform = compose_two_transform(transform, t)
+    elements_of_composed_transform[transform] = tuple(transforms)
+    return transform
+
+
+def compose_two_transform(transformer1, transformer2):
+    source_format = source_format_of_transform[transformer1]
+    target_format = target_format_of_transform[transformer2]
+
+    def transformer_composed_of_two(args, config):
+        t1 = transformer1(args, config)
+        t2 = transformer2(args, config)
+
+        def transform(source):
+            transformed = t1(source)
+            return t2(transformed)
+        return transform
+    source_format_of_transform[transformer_composed_of_two] = source_format
+    target_format_of_transform[transformer_composed_of_two] = target_format
+    logger.debug('composed transform %r: %r + %r',
+                 transformer_composed_of_two, transformer1, transformer2)
+    return transformer_composed_of_two
+
+
+def find_shortest_transforms(source_format, target_format):  # noqa
+    ''' Find the shortest transform path using Dijkstra algorithm.
+
+    formats as vertices, transforms as edges
+    '''
+
+    Q = set(defined_formats.keys())
+
+    distance = dict((formatspec, sys.maxint)
+                    for formatspec in Q)
+    distance[source_format] = 0
+    previous = {}
+
+    def extract_u_at_minimum_distance(Q):
+        u = min(Q, key=lambda u: distance[u])
+        Q.remove(u)
+        return u
+
+    def neighbors_of_x(x):
+        for u, v in defined_transforms.keys():
+            if u != x:
+                continue
+            yield v
+
+    def weight(u, v):
+        return 1
+
+    while Q:
+        u = extract_u_at_minimum_distance(Q)
+        distance_u = distance[u]
+        for v in neighbors_of_x(u):
+            edgeweight = weight(u, v)
+            if (distance[v] > distance_u + edgeweight):
+                distance[v] = distance_u + edgeweight
+                previous[v] = u
+
+    def backtrace():
+        u = None
+        v = target_format
+        while v != source_format:
+            u = previous[v]
+            yield defined_transforms[u, v]
+            v = u
+    backpath = list(backtrace())
+    return reversed(backpath)
+
+
+@transform_source_format('client', list)
+@transform_target_format('table')
+def transformer_client_list_into_table(args, config):
+    def transform(clients):
+        header = [
+            '_id',
+            'client_id',
+            'Alias',
+            'Flow Type',
+        ]
+        body = [[
+            client._id,
+            client.client_id,
+            client.alias,
+            client.flow_type
+        ] for client in clients]
+        return {
+            'header': header,
+            'body': body,
+        }
+    return transform
+
+
+@transform_source_format('token', list)
+@transform_target_format('table')
+def transformer_token_list_into_table(args, config):
+    def transform(tokens):
+        header = [
+            '_id',
+            'Client',
+            'User',
+            'Access Token',
+            'Expires At',
+            'Refresh Token',
+            'Token Type',
+            'Revoked',
+            'Scope',
+        ]
+        body = []
+        for token in tokens:
+            body.append([
+                token._id,
+                token.client_alias or token.client_id,
+                token.user_email or token.user_id,
+                token.access_token,
+                'Expired' if token.expired else str(token.expires_at),
+                token.refresh_token,
+                token.token_type,
+                'Revoked' if token.revoked else '',
+                ' '.join(shortify_scope(s) for s in token.scope_tuple),
+            ])
+        return {
+            'header': header,
+            'body': body,
+        }
+    return transform
+
+
+@transform_source_format('basetoken', list)
+@transform_target_format('table')
+def transformer_basetoken_list_into_table(args, config):
+    def transform(basetokens):
+        header = [
+            '_id',
+            'Client',
+            'User',
+            'Refresh Token',
+            'Revoked',
+            'Scope',
+        ]
+        body = []
+        for basetoken in basetokens:
+            body.append([
+                basetoken._id,
+                basetoken.client_alias or basetoken.client_id,
+                basetoken.user_email or basetoken.user_id,
+                basetoken.refresh_token,
+                'Revoked' if basetoken.revoked else '',
+                ' '.join(shortify_scope(s) for s in basetoken.scope_tuple),
+            ])
+
+        return {
+            'header': header,
+            'body': body,
+        }
+    return transform
+
+
+@transform_source_format('user', list)
+@transform_target_format('table')
+def transformer_user_list_into_table(args, config):
+    def transform(users):
+        header = [
+            '_id',
+            'user_id',
+            'Email',
+            'Verified Email',
+        ]
+        body = []
+        for user in users:
+            body.append([
+                user._id,
+                user.user_id,
+                user.email,
+                str(user.verified_email),
+            ])
+        return {
+            'header': header,
+            'body': body,
+        }
+    return transform
+
+
+@transform_source_format('table')
+@transform_target_format('tabulate')
+def transformer_table_into_tabulate(args, config):
+    def transform(table):
+        header = table.get('header')
+        body = table.get('body', [])
+        return {
+            'table': body,
+            'headers': header
+        }
+    return transform
+
+
+def define_transformer_singular_into_list(*formatspec):
+    @transform_source_format(*formatspec)
+    @transform_target_format(*(formatspec + (list,)))
+    def transformer_singular_into_list(args, config):
+        def transform(singular):
+            return [singular]
+        return transform
+    return transformer_singular_into_list
+
+
+define_transformer_singular_into_list('client')
+define_transformer_singular_into_list('user')
+define_transformer_singular_into_list('token')
+define_transformer_singular_into_list('basetoken')
 
 
 #

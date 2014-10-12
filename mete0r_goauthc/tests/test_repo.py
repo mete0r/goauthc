@@ -243,7 +243,23 @@ class TokenTest(TestCase):
         self.assertEquals(None, repo.get_token(token_id))
 
 
+class TransformTest(TestCase):
+
+    def test_find_transforms(self):
+        from ..cli import find_shortest_transforms
+        from ..cli import transformer_client_list_into_table
+        from ..cli import transformer_table_into_tabulate
+        source_format = 'client', list
+        target_format = 'tabulate',
+        transformers = find_shortest_transforms(source_format, target_format)
+        transformers = tuple(transformers)
+        self.assertEquals((transformer_client_list_into_table,
+                           transformer_table_into_tabulate),
+                          transformers)
+
+
 def test_suite():
     return TestSuite((makeSuite(RepoCreateTest),
                       makeSuite(RepoTest),
-                      makeSuite(TokenTest)))
+                      makeSuite(TokenTest),
+                      makeSuite(TransformTest)))
