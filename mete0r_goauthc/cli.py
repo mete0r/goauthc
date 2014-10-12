@@ -82,10 +82,15 @@ logger = logging.getLogger(__name__)
 
 
 def setupLogging(config):
+    logging.basicConfig()
+    updateLogging(config)
+
+
+def updateLogging(config):
     loglevel_root = parse_loglevel(config['loglevel.root'])
     loglevel_db = parse_loglevel(config['loglevel.db'])
 
-    logging.basicConfig(level=loglevel_root)
+    logging.getLogger().setLevel(loglevel_root)
     logging.getLogger('sqlalchemy.engine').setLevel(loglevel_db)
 
 
@@ -211,7 +216,7 @@ def resource_repo(args, config):
     repo_dir = config['repo.dir']
     with Repo.open_dir(repo_dir) as repo:
         config.update(repo.config)
-        setupLogging(config)
+        updateLogging(config)
         yield repo
 
 
