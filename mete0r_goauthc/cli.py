@@ -1082,7 +1082,7 @@ HTTPS_GOOGLEAPIS_AUTH = 'https://www.googleapis.com/auth/'
 
 
 def canonicalize_scope(scope):
-    if scope in ('email', 'profile'):
+    if scope in ('email', 'profile', 'openid'):
         return scope
 
     if '/' not in scope:
