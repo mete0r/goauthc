@@ -261,11 +261,21 @@ def resource_config(args, config):
 
 @resource_resolver('repo')
 def resource_repo(args, config):
-    repo_dir = config['repo.dir']
+    repo_dir = search_repo_dir()
     with Repo.open_dir(repo_dir) as repo:
         config.update(repo.config)
         updateLogging(config)
         yield repo
+
+
+def search_repo_dir():
+    curdir = os.getcwd()
+    while curdir != '/':
+        repo_dir = os.path.join(curdir, '.goauthc')
+        if os.path.exists(repo_dir):
+            return repo_dir
+        curdir, _ = os.path.split(curdir)
+    return '.goauthc'
 
 
 @resource_resolver('create_repo')
