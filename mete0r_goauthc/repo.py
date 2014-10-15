@@ -243,6 +243,15 @@ class Repo:
         self.session.add(access_token)
         return access_token
 
+    def put_access_token(self, token, credentials):
+        expires_at = datetime.fromtimestamp(credentials['expires_at'])
+        token.access_token = credentials['access_token']
+        if 'id_token' in credentials:
+            token.id_token = credentials['id_token']
+        token.expires_in = credentials['expires_in']
+        token.expires_at = expires_at
+        token.token_type = credentials['token_type']
+
     def delete_token(self, token_id):
         token = self.get_token(token_id)
         if token:

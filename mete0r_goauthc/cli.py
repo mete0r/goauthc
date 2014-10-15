@@ -32,7 +32,7 @@ Usage:
        goauthc token show <token> [--output-format=<format>]
        goauthc token dump <token>
        goauthc token info <token>
-       goauthc token refresh <token>
+       goauthc token refresh [--new] <token>
        goauthc token revoke <token>
        goauthc token delete <token>
        goauthc token acquire [--client=<client>] [--user=<user>] <scope>...
@@ -998,8 +998,12 @@ def token_acquire(repo, client_id, user_id, scopes):
 
     credentials = refresh_token(token.client.raw, token.refresh_token)
     token_update_expires_at(credentials)
-    new_token = repo.add_access_token(token.base_token, credentials)
-    return new_token.raw
+    if token.expired:
+        repo.put_access_token(token, credentials)
+        return token.raw
+    else:
+        new_token = repo.add_access_token(token.base_token, credentials)
+        return new_token.raw
 
 
 @dispatch
@@ -1012,16 +1016,20 @@ def token_info(repo, token_id):
 
 
 @dispatch
-@with_resource('repo', '<token>')
+@with_resource('repo', '<token>', '--new')
 @with_renderer('token')
-def token_refresh(repo, token_id):
+def token_refresh(repo, token_id, as_new_token):
     token = repo.get_token(token_id)
 
     credentials = refresh_token(token.client.raw, token.refresh_token)
     token_update_expires_at(credentials)
-    new_token = repo.add_access_token(token.base_token, credentials)
-    repo.session.flush()
-    return new_token
+    if as_new_token:
+        new_token = repo.add_access_token(token.base_token, credentials)
+        repo.session.flush()
+        return new_token
+    else:
+        repo.put_access_token(token, credentials)
+        return token
 
 
 @dispatch
