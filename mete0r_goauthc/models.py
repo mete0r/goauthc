@@ -22,6 +22,7 @@ import json
 import time
 
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import configure_mappers
 from sqlalchemy import Column
 from sqlalchemy import ForeignKey
 from sqlalchemy.orm import relationship
@@ -32,10 +33,14 @@ from sqlalchemy.types import Integer
 from sqlalchemy.types import String
 from sqlalchemy.types import Text
 from sqlalchemy.types import TypeDecorator
+from sqlalchemy_continuum import make_versioned
 
 
 Base = declarative_base()
 metadata = Base.metadata
+
+
+make_versioned(user_cls=None)
 
 
 class JSONEncodedText(TypeDecorator):
@@ -51,6 +56,7 @@ class JSONEncodedText(TypeDecorator):
 
 class Client(Base):
     __tablename__ = 'Client'
+    __versioned__ = {}
 
     _id = Column(Integer, primary_key=True)
     client_id = Column(String, unique=True)
@@ -72,6 +78,7 @@ class Client(Base):
 
 class User(Base):
     __tablename__ = 'User'
+    __versioned__ = {}
 
     _id = Column(Integer, primary_key=True)
     user_id = Column(String, unique=True)
@@ -85,6 +92,7 @@ class User(Base):
 
 class BaseToken(Base):
     __tablename__ = 'BaseToken'
+    __versioned__ = {}
 
     _id = Column(Integer, primary_key=True)
     client_id = Column(String, ForeignKey('Client.client_id'))
@@ -120,6 +128,7 @@ class BaseToken(Base):
 
 class AccessToken(Base):
     __tablename__ = 'AccessToken'
+    __versioned__ = {}
 
     _id = Column(Integer, primary_key=True)
     base_token_id = Column(Integer, ForeignKey('BaseToken._id'))
@@ -201,6 +210,7 @@ class AccessToken(Base):
 
 class TokenScope(Base):
     __tablename__ = 'TokenScope'
+    __versioned__ = {}
 
     _id = Column(Integer, primary_key=True)
     base_token_id = Column(Integer, ForeignKey('BaseToken._id'))
@@ -209,3 +219,6 @@ class TokenScope(Base):
     def __repr__(self):
         return '<TokenScope %r of BaseToken %r>' % (self.value,
                                                     self.base_token_id)
+
+
+configure_mappers()

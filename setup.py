@@ -53,6 +53,7 @@ setup_info = {
         'requests',
         'docopt',
         'sqlalchemy',
+        'sqlalchemy-continuum',
         'tabulate',
     ],
     'entry_points': {
