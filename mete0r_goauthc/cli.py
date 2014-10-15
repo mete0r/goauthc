@@ -28,7 +28,8 @@ Usage:
        goauthc user show <user> [--output-format=<format>]
        goauthc user delete <user>
        goauthc auth [--flow=<type>] <client> [--login=<email>] <scope>...
-       goauthc token list [--client=<client>] [--user=<user>] [<scope>...]
+       goauthc token list [--client=<client>] [--user=<user>] [--full]
+                          [<scope>...]
        goauthc token show <token> [--output-format=<format>]
        goauthc token dump <token>
        goauthc token info <token>
@@ -664,30 +665,50 @@ def transformer_token_into_json(args, config):
 @transform_target_format('table')
 def transformer_token_list_into_table(args, config):
     def transform(tokens):
-        header = [
-            '_id',
-            'Client',
-            'User',
-            'Access Token',
-            'Expires At',
-            'Refresh Token',
-            'Token Type',
-            'Revoked',
-            'Scope',
-        ]
+        if args['--full']:
+            header = [
+                '_id',
+                'Client',
+                'User',
+                'Access Token',
+                'Expires At',
+                'Refresh Token',
+                'Token Type',
+                'Revoked',
+                'Scope',
+            ]
+        else:
+            header = [
+                '_id',
+                'User',
+                'Access Token',
+                'Expires At',
+                'Revoked',
+                'Scope',
+            ]
         body = []
         for token in tokens:
-            body.append([
-                token._id,
-                token.client_alias or token.client_id,
-                token.user_email or token.user_id,
-                token.access_token,
-                'Expired' if token.expired else str(token.expires_at),
-                token.refresh_token,
-                token.token_type,
-                'Revoked' if token.revoked else '',
-                ' '.join(shortify_scope(s) for s in token.scope_tuple),
-            ])
+            if args['--full']:
+                body.append([
+                    token._id,
+                    token.client_alias or token.client_id,
+                    token.user_email or token.user_id,
+                    token.access_token,
+                    'Expired' if token.expired else str(token.expires_at),
+                    token.refresh_token,
+                    token.token_type,
+                    'Revoked' if token.revoked else '',
+                    ' '.join(shortify_scope(s) for s in token.scope_tuple),
+                ])
+            else:
+                body.append([
+                    token._id,
+                    token.user_email or token.user_id,
+                    token.access_token,
+                    'Expired' if token.expired else str(token.expires_at),
+                    'Revoked' if token.revoked else '',
+                    ' '.join(shortify_scope(s) for s in token.scope_tuple),
+                ])
         return {
             'header': header,
             'body': body,
